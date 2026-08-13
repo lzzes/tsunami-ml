@@ -129,9 +129,9 @@ def make_blocks(df_x, df_y, x_block_size=1896, y_block_size=520):        # updat
         # Replace NAN height values
         height = df_standardized['MaxHeight']
         height_mask = df_standardized['InundateH'].astype(bool)
+        df_standardized.loc[~height_mask,'MaxHeight'] = 9999999
 
         def z_standardize_height(df_st, h, mask):
-            df_st.loc[~mask,'MaxHeight'] = 9999999
 
             # Compute height statistics
             if statistics[2]==0:
@@ -147,7 +147,6 @@ def make_blocks(df_x, df_y, x_block_size=1896, y_block_size=520):        # updat
             return h_mean, h_std
         
         def minmax_standardize_height(df_st, h, mask):
-            df_st.loc[~mask,'MaxHeight'] = 9999999
 
             hmax = np.max(df_st.loc[mask, 'MaxHeight'])
             hmin = np.min(df_st.loc[mask, 'MaxHeight'])
@@ -156,7 +155,8 @@ def make_blocks(df_x, df_y, x_block_size=1896, y_block_size=520):        # updat
 
             return hmax, hmin
         
-        h_mean, h_std = z_standardize_height(df_standardized, height, height_mask)
+        h_mean, h_std = height[height_mask].mean(), height[height_mask].std()
+        #h_mean, h_std = z_standardize_height(df_standardized, height, height_mask)
 
         # h_max, h_min = minmax_standardize_height(df_standardized, height, height_mask)
 

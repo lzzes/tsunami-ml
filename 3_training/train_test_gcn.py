@@ -1,9 +1,13 @@
+#import torch.optim as optim
 from torch.utils.data import DataLoader, SubsetRandomSampler, Dataset
 
 from sklearn.model_selection import train_test_split
 
-
+#import tempfile
 import torch
+#import torch.nn as nn
+
+#from tqdm import tqdm
 
 from pathlib import Path
 
@@ -11,13 +15,15 @@ from model_gcn import RuptureNet2D
 
 from datasets_gcn import BlockDataset, load_data, make_blocks
 
-from loss_gcn import loss_calc
+from loss_func_5 import loss_calc
 
-
+# import ray
+# import ray.tune as tune
 import numpy as np
 import os
 import time
 import pandas as pd
+import argparse
 
 class LazyDataset(Dataset):
     '''Dataset that loads blocks from disk on demand to save RAM'''
@@ -141,7 +147,7 @@ def main(Train_flag, Test_flag, checkpoint_no):
         optimizer = torch.optim.Adam(model.parameters(), lr=config['lr'])
 
         # Find best model later
-        best_val_loss = 5.084
+        best_val_loss = 6.502
 
         # Prepare data
         train_idx, val_idx = train_test_split(range(len(train_dataset)), train_size=0.75, random_state=218)
@@ -151,8 +157,8 @@ def main(Train_flag, Test_flag, checkpoint_no):
 
         batch_size = config['batch_size']
 
-        train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=4, sampler=train_split)        # reduced from 8 to 2
-        val_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=4, sampler=val_split)            # reduced from 8 to 2
+        train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=2, sampler=train_split)        # reduced from 8 to 2
+        val_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=2, sampler=val_split)            # reduced from 8 to 2
 
 
         # Training loop
@@ -290,6 +296,6 @@ def main(Train_flag, Test_flag, checkpoint_no):
         print("Please specify train or test.")
 
 if __name__ == "__main__":
-    main(Train_flag=1, Test_flag=0, checkpoint_no=8)
+    main(Train_flag=0, Test_flag=1, checkpoint_no=0)
     
     

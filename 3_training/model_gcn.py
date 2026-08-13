@@ -133,6 +133,9 @@ class RuptureNet2D(nn.Module):
 
         self.relu = nn.ReLU()
 
+        # Learned linear interpolation, added 8/13/26
+        self.coastal_projection = nn.LazyLinear(520)
+
         # for scheduler, removed 8/18
         #self.embed_dim = cur_dim
 
@@ -203,15 +206,18 @@ class RuptureNet2D(nn.Module):
         time_out = self.head_time(time_features)
 
         height_features = self.relu(self.conv2_height(x))
-        height_out = self.head_height(height_features)
+        # Added self.relu below, 8/13/2026
+        height_out = self.relu(self.head_height(height_features))
         # height_out = F.softplus(height_out) ## removed 8/3/2026
 
         inundate_out = self.head_inundate(height_features)
 
         x = torch.cat([time_out, height_out, inundate_out],dim=1)
 
-        # Interpolate to 670 output points
-        x = nn.functional.interpolate(x, size=520, mode='linear', align_corners=False)
+        # Interpolate to 670 output points, replaced 8/13
+        # x = nn.functional.interpolate(x, size=520, mode='linear', align_corners=False)
+        x = self.coastal_projection(x)
+
 
         # (N, 3, 670) -> (N, 670, 3)
         x = torch.transpose(x, 1, 2)

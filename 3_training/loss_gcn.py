@@ -15,6 +15,11 @@ import torch
 # MSE = t_mse + 2*h_mse
 # z scale for h again
 
+# 8/13/26 Update
+# MSE = t_mse + h_mse
+# weight = (1 + target)**2 instead of just (1+ target)
+# will unstandardize h completely
+
 # Masked loss function
 def masked_MSE(pred, target, inundate, nan_value=9999999):
     # Separate time target for NAN mask
@@ -54,7 +59,9 @@ def weighted_MSE(pred, target, inundate):
         return torch.tensor(0.0, device=pred.device, dtype=pred.dtype)
 
     # Calculate MSE then mask
-    sq_err = (1+target)*((pred - target)**2)
+    k = 2 # quadratic scaling for now
+    weight = (1 + target)**k
+    sq_err = weight*((pred - target)**2)
 
     masked_sq_err = sq_err[LV]
 
@@ -72,9 +79,6 @@ def loss_calc(preds_all,targets_all):
     t_inundate_targets = targets_all[:,:,2]
     h_inundate_targets = targets_all[:,:,3]
 
-    h_neg = h_preds[h_preds < 0]
-    h_preds[h_preds < 0] = torch.zeros_like(h_neg)
-
     # Calculate MSE
     t_MSE = masked_MSE(t_preds,t_targets,t_inundate_targets)
     h_MSE = weighted_MSE(h_preds,h_targets,h_inundate_targets)
@@ -83,7 +87,7 @@ def loss_calc(preds_all,targets_all):
     bce_func = nn.BCEWithLogitsLoss()
     BCE = bce_func(inundate_preds, h_inundate_targets)
 
-    MSE = t_MSE + 2*h_MSE
+    MSE = t_MSE + h_MSE
 
         # Calculate loss
     loss = MSE + BCE
