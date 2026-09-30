@@ -1,12 +1,19 @@
 import pandas as pd
 import numpy as np
-
-from tqdm import tqdm
+import os
 
 import torch
 from torch.utils.data import Dataset
 
 from sklearn.model_selection import train_test_split
+
+# Data directories
+input_filelist = np.loadtxt("/u/home/l/lzzes/project-lsmeng/Input0904/input_filelist.txt",dtype=str)
+input_csv_files = [f"/u/home/l/lzzes/project-lsmeng/Input0904/{fname}" for fname in input_filelist]
+
+output_filelist = np.loadtxt("/u/home/l/lzzes/project-lsmeng/Output0904/output_filelist.txt",dtype=str)
+output_csv_files = [f"/u/home/l/lzzes/project-lsmeng/Output0904/{fname}" for fname in output_filelist]
+
 
 def read_input(csv_files):
     df = pd.read_csv(csv_files, index_col= False,
@@ -17,7 +24,7 @@ def read_input(csv_files):
 def read_output(csv_files):
     df = pd.read_csv(csv_files, index_col=False,
                      header = 0,
-                     names = ["Lon", "Lat", "Arrival", "MaxHeight", "InundateT","InundateH"])
+                     names = ["Lon", "Lat", "Arrival", "MaxHeight", "BinT","BinH"])
     return df
 
 def load_data():
@@ -86,22 +93,33 @@ def make_blocks(df_x, df_y, x_block_size=1896, y_block_size=520):        # updat
     test_y = pd.concat(test_output_blocks, axis=0, ignore_index=True)
 
     # Apply mean-stdev standardization
-    def standardize_input(df, num_col=4):
+    def standardize_input(df, num_col=4, statistics = None):
         '''
         Standardizes columns 
         Must specify number of columns in dataframe
         '''
-        for col in range(num_col):
-            col_mean = np.mean(df.iloc[:,col])
-            col_std = np.std(df.iloc[:,col])
+        input_stats = np.zeros((num_col,2))
 
-            if col_std==0:
-                df.iloc[:,col] = 0
-            else:
-                df.iloc[:,col] = (df.iloc[:,col].values - col_mean) / col_std
-        return df
+        if statistics is None:
+            for col in range(num_col):
+                col_mean = np.mean(df.iloc[:,col])
+                col_std = np.std(df.iloc[:,col])
+
+                input_stats[col,:] = col_mean, col_std
+
+                if col_std==0:
+                    df.iloc[:,col] = 0
+                else:
+                    df.iloc[:,col] = (df.iloc[:,col].values - col_mean) / col_std
+
+        else:
+            for col in range(num_col):
+                input_stats = statistics
+                df.iloc[:,col] = (df.iloc[:,col].values - statistics[col,0]) / statistics[col,1]
+        
+        return df, input_stats
     
-    def standardize_output(df, statistics = [0,0,0,0]):
+    def standardize_output(df, statistics = None):
         '''
         Standardizes columns 
         Must specify number of columns in dataframe
@@ -109,16 +127,18 @@ def make_blocks(df_x, df_y, x_block_size=1896, y_block_size=520):        # updat
         '''
 
         df_standardized = df.copy()
+        output_stats = np.zeros(4)
 
         # Replace NAN values with large sentinel value
         arr_time = df_standardized['Arrival']
-        time_mask = df_standardized['InundateT'].astype(bool)
+        time_mask = df_standardized['BinT'].astype(bool)
         df_standardized.loc[~time_mask, 'Arrival'] = 9999999
 
-        # Compute column statistics of inundated areas
-        if statistics[0]==0:
+        # Compute column statistics of areas with run-up
+        if statistics is None:
             t_mean = arr_time[time_mask].mean()
             t_std = arr_time[time_mask].std()
+            output_stats[:2] = t_mean, t_std
         else:
             t_mean = statistics[0]
             t_std  = statistics[1]
@@ -128,15 +148,16 @@ def make_blocks(df_x, df_y, x_block_size=1896, y_block_size=520):        # updat
 
         # Replace NAN height values
         height = df_standardized['MaxHeight']
-        height_mask = df_standardized['InundateH'].astype(bool)
+        height_mask = df_standardized['BinH'].astype(bool)
         df_standardized.loc[~height_mask,'MaxHeight'] = 9999999
 
         def z_standardize_height(df_st, h, mask):
 
             # Compute height statistics
-            if statistics[2]==0:
+            if statistics is None:
                 h_mean = h[mask].mean()
                 h_std = h[mask].std()
+                output_stats[2:] = h_mean, h_std
             else:
                 h_mean = statistics[2]
                 h_std  = statistics[3]
@@ -146,7 +167,7 @@ def make_blocks(df_x, df_y, x_block_size=1896, y_block_size=520):        # updat
 
             return h_mean, h_std
         
-        def minmax_standardize_height(df_st, h, mask):
+        def minmax_standardize_height(df_st, mask):
 
             hmax = np.max(df_st.loc[mask, 'MaxHeight'])
             hmin = np.min(df_st.loc[mask, 'MaxHeight'])
@@ -154,28 +175,23 @@ def make_blocks(df_x, df_y, x_block_size=1896, y_block_size=520):        # updat
             df_st.loc[mask, "MaxHeight"] = (df_st.loc[mask,'MaxHeight']-hmin)/(hmax - hmin)
 
             return hmax, hmin
-        
-        h_mean, h_std = height[height_mask].mean(), height[height_mask].std()
-        #h_mean, h_std = z_standardize_height(df_standardized, height, height_mask)
 
-        # h_max, h_min = minmax_standardize_height(df_standardized, height, height_mask)
+        def logscale_height(df_st, mask):
+            df_st.loc[mask, "MaxHeight"] = np.log1p(df_st.loc[mask, "MaxHeight"])
 
-        # h_mean = h_max
-        # h_std = h_min
+        logscale_height(df_standardized, height_mask)
 
-        stats = [t_mean, t_std, h_mean, h_std]
-
-        return df_standardized, stats
+        return df_standardized, output_stats
     
 
-    
     # Standardize data
-    train_x = standardize_input(train_x)
-    train_y, stats = standardize_output(train_y)
-    test_x  = standardize_input(test_x)
-    test_y, test_stats  = standardize_output(test_y, statistics=stats)
+    train_x, in_stats = standardize_input(train_x)
+    train_y, out_stats = standardize_output(train_y)
+    test_x, test_stats  = standardize_input(test_x, statistics = in_stats)
+    test_y, test_stats  = standardize_output(test_y, statistics=out_stats)
 
-    np.savetxt("output-stats.txt", stats, header="T mean T std H min H max")
+    np.savetxt("input-stats.txt", in_stats, header="Lon Lat Dep Slip; Mean Std")
+    np.savetxt("output-stats.txt", out_stats, header="T mean T std H min H max")
 
 
     # Split blocks into tensors
@@ -206,8 +222,48 @@ class BlockDataset(Dataset): # Not used, see Lazy Dataset in train_test_cnn.py
     def __getitem__(self, index):
         return self.blocks[index]
 
-input_filelist = np.loadtxt("Input7/input_filelist.txt",dtype=str)
-input_csv_files = [f"Input7/{fname}" for fname in input_filelist]
+class LazyDataset(Dataset):
+    '''Dataset that loads blocks from disk on demand to save RAM'''
 
-output_filelist = np.loadtxt("/u/home/l/lzzes/project-lsmeng/Output9/output_filelist.txt",dtype=str)
-output_csv_files = [f"/u/home/l/lzzes/project-lsmeng/Output9/{fname}" for fname in output_filelist]
+    def __init__(self, block_files, debug=False):
+        """
+        Args:
+            block_files: List of file paths to saved blocks, or directory containing block files
+            debug: Enable debug mode
+        """
+        self.debug = debug
+        
+        # Handle both list of files and directory path
+        if isinstance(block_files, str):
+            # Assume it's a directory path
+            self.block_files = [
+                os.path.join(block_files, f) 
+                for f in sorted(os.listdir(block_files))
+                if f.endswith(('.pt', '.pth', '.pkl'))
+            ]
+        else:
+            # Assume it's already a list of file paths
+            self.block_files = block_files
+            
+        if self.debug:
+            print(f"LazyBlockDataset initialized with {len(self.block_files)} block files")
+
+    def __len__(self):
+        return len(self.block_files)
+
+    def __getitem__(self, index):
+        """Load and return block from disk"""
+        filepath = self.block_files[index]
+        
+        try:
+            block = torch.load(filepath, map_location='cpu',weights_only=True)
+                    
+            if self.debug:
+                print(f"Loaded block from {filepath}")
+                
+            return block
+            
+        except Exception as e:
+            if self.debug:
+                print(f"Error loading {filepath}: {e}")
+            raise

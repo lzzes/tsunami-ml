@@ -1,41 +1,56 @@
-import matpotlib
+import matplotlib
 matplotlib.use('Agg')
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy import stats
+Normal = stats.norm
 
-num_eval = 0 # number of csv files
+def load_data(num_eval):
 
-for i in range(num_eval):
-    preds_i = np.loadtxt(f"Eval_DATA/PTHA/eval-{i}-pred.csv", unpack = True, delimiter = ",", skiprows=1)
+    preds = np.array([])
 
-    preds = np.append(preds, preds_i)
+    for i in range(num_eval):
+        preds_i = np.loadtxt(f"Eval_Data/PTHA0904/eval-{i}-pred.csv", unpack = True, delimiter = ",", skiprows=1)
 
-# Height predictions
-height_pred = preds[1::3]
+        preds = np.append(preds, preds_i)
 
-# Binary predictions
-in_pred = preds[2::3]
-prob = 1/(1+np.exp(-in_pred))
-runup_pred = (prob > 0.5).astype(int)
+    # Height predictions
+    height_pred = preds[1::3]
 
-# Create mask
-h_in_true = runup_pred.astype(bool)
+    # Inverse log1p transform
+    height_pred = np.exp(height_pred) - 1
 
-# Load occurrence rates
-xxx, m_rate = np.loadtxt("occurrence-rates.txt",unpack=True)
+    # Binary predictions
+    in_pred = preds[2::3]
+    prob = 1/(1+np.exp(-in_pred))
+    runup_pred = (prob > 0.5).astype(int)
 
-# Probability of a single event
-prob_ev = m_rate/302    # Assuming there's 302 events of each magnitude
+    # Create mask
+    h_in_true = runup_pred.astype(bool)
 
-# Hazard levels
-levels = np.logspace(-2,1,100)
+    return height_pred, h_in_true
 
-# All magnitudes
-ptha_mags = np.array([])
-start = 7.5
-for i in range(16):
-    ptha_mags=np.append(ptha_mags,start*np.ones(302))
-    start = start + 0.1
+def determine_magnitudes(bin_size):
+    # Load occurrence rates
+    xxx, m_rate = np.loadtxt("occurrence-rates.txt",unpack=True)
+
+    # Probability of a single event
+    prob_ev = m_rate/bin_size    # Assuming there's 302 events of each magnitude
+
+    # Load error
+
+
+    # All magnitudes
+    ptha_mags = np.array([])
+    start = 7.5
+    for i in range(16):
+        ptha_mags=np.append(ptha_mags,start*np.ones(bin_size//2))
+        start = start + 0.1
+
+    ptha_mags = np.append(ptha_mags, ptha_mags)
+
+    return prob_ev, ptha_mags
+
 
 def plot_map(loc, ax=None):
     if ax is None:
@@ -49,7 +64,7 @@ def plot_map(loc, ax=None):
     ax.set_yticks([])
 
 
-def calc_hazard(loc):
+def calc_hazard(loc,height_pred,h_in_true,levels,num_eval,ptha_mags,prob_ev):
     exceedance = np.zeros(100)
 
     # Calculate exceedance at each level
@@ -57,7 +72,7 @@ def calc_hazard(loc):
         L_exceed = 0
 
 
-        for i in range(4864):
+        for i in range(num_eval*64):
             magnitude = ptha_mags[i]
 
             if (height_pred[loc::520][i] > levels[lvl]) & (h_in_true[loc::520][i]==True):
@@ -68,7 +83,39 @@ def calc_hazard(loc):
 
     return exceedance
 
-def plot_hazard(exceedance, title):
+def calc_hazard_err(loc,height_pred,h_in_true,levels,num_eval,ptha_mags,prob_ev,lower,upper,mean,stdev):
+
+    exceedance = np.zeros(100)
+
+    # Calculate exceedance at each level
+    for lvl in range(len(levels)):
+        L_exceed = 0 # start with exceedance rate of 0
+        threshold = levels[lvl] # establish wave height threshold
+
+
+        for i in range(num_eval): # for each scenario
+
+            magnitude = ptha_mags[i] # determine the magnitude
+            occurrence = prob_ev[int((magnitude*10))%75] # and corresponding occurrence rate
+
+            if h_in_true[loc::520][i]==False: # ignore events without run-up
+                continue
+
+            prediction = height_pred[loc::520][i] # find prediction
+
+            # Build CDF
+            mask = (prediction < upper) & (prediction < lower)
+            center, spread = mean[mask], stdev[mask]
+
+            dist = 1 - Normal.cdf(threshold, loc=center, scale=spread)
+            
+            L_exceed += dist*occurrence
+
+        exceedance[lvl]= L_exceed
+
+    return exceedance
+
+def plot_hazard(exceedance, title,levels):
 
     plt.plot(levels, exceedance, "-b")
     plt.semilogx()
@@ -94,15 +141,33 @@ def plot_hazard_map(loc, title):
 
     return exceedance
 
-def main(loc_idx, aep_flag=0):
-    exceed_loc = plot_hazard_map(293, "Tokyo")
-    print("Max exceedance probability", exceed_loc.max())
+def main(bin_size=304,num_eval=76,resolution=100,CDF_flag=0):
 
-    if aep_flag==1:
-        aep = np.zeros(520)
+    # Load data
+    height_pred, h_in_true = load_data(num_eval)
 
-        for i in range(520):
-            ex_i = calc_hazard(i)
+    # Calculate normalized event occurrence rates
+    prob_ev, ptha_mags = determine_magnitudes(bin_size)
 
-            aep[i] = ex_i[np.argmin(np.abs(levels-0.1))]
-        np.savetxt("aep.txt", aep)
+    # Hazard levels
+    levels = np.logspace(-2,1,resolution)
+
+    # Set up file
+    aep = np.zeros((520, resolution))
+
+    # Discrete or PDF version
+    if CDF_flag==1:
+        lower, upper, mean, stdev = np.loadtxt("error_rates.txt",unpack=True)
+
+        for k in range(520):
+            aep[k,:] = calc_hazard_err(k,height_pred,h_in_true,levels,num_eval,ptha_mags,lower,upper,mean,stdev)
+    else:
+        for k in range(520):
+            aep[k,:] = calc_hazard(k, height_pred, h_in_true, levels, num_eval, ptha_mags, prob_ev)
+            if k%50==0:
+                print(k)
+
+    np.savetxt("aep.txt", aep)
+
+if __name__=="__main__":
+    main()

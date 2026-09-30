@@ -207,16 +207,16 @@ class RuptureNet2D(nn.Module):
 
         height_features = self.relu(self.conv2_height(x))
         # Added self.relu below, 8/13/2026
-        height_out = self.relu(self.head_height(height_features))
-        # height_out = F.softplus(height_out) ## removed 8/3/2026
+        height_out = self.head_height(height_features)
 
         inundate_out = self.head_inundate(height_features)
 
-        x = torch.cat([time_out, height_out, inundate_out],dim=1)
+        # Interpolate to 520 features, apply relu
+        time_out = self.coastal_projection(time_out)
+        height_out = self.relu(self.coastal_projection(height_out))
+        inundate_out = self.coastal_projection(inundate_out)
 
-        # Interpolate to 670 output points, replaced 8/13
-        # x = nn.functional.interpolate(x, size=520, mode='linear', align_corners=False)
-        x = self.coastal_projection(x)
+        x = torch.cat([time_out, height_out, inundate_out],dim=1)
 
 
         # (N, 3, 670) -> (N, 670, 3)

@@ -1,26 +1,19 @@
-#import torch.optim as optim
-from torch.utils.data import DataLoader, SubsetRandomSampler, Dataset
-
-from sklearn.model_selection import train_test_split
-
-#import tempfile
-import torch
-#import torch.nn as nn
-
-#from tqdm import tqdm
-
 from pathlib import Path
-
-from model_gcn import RuptureNet2D
-
-from datasets_gcn import BlockDataset, load_data, make_blocks
+import time
 
 import numpy as np
-import time
 import pandas as pd
+import torch
+from torch.utils.data import DataLoader
+
+from model_gcn import RuptureNet2D
+from eval_data import load_eval_data, make_eval_blocks, EvalBlockDataset
 
 
-def main(Train_flag, Test_flag, checkpoint_no):
+def main(eval_data_dir="Eval_Data",
+         input_stats_path="input_stats.txt",
+         model_checkpoint="Training_GCN_v7/best_model.pth",
+         output_dir="Eval_Data/PTHA"):
 
     config = {
         'batch_size': 64,
@@ -28,105 +21,81 @@ def main(Train_flag, Test_flag, checkpoint_no):
         'gcn_in_features': 4,
         'gcn_hidden_dim': 128,
         'gcn_out_dim': 256,
-        'conv1_dim': 256, #increase dimensions
-        'conv1_layers': 2, 
-        'num_transformer_blocks': 6, ###
+        'conv1_dim': 256,
+        'conv1_layers': 2,
+        'num_transformer_blocks': 6,
         'num_transformer_heads': 8,
-        'transformer_hidden_dim': 768, # inc from 256
-        'conv2_dim': 256, # inc from 32
-        'dropout_pro': 0.4, # inc from 0.3
+        'transformer_hidden_dim': 768,
+        'conv2_dim': 256,
+        'dropout_pro': 0.4,
         }
-    # Hyperparameters
-    num_epochs = 51
-    debug = False
 
-    # Dataset
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    data_cache_path = Path("./data_cache").resolve()
-    data_cache_path.mkdir(parents=True, exist_ok=True)
+    # Load the TRAINING set's input normalization stats (see compute_input_stats.py).
+    # Eval data must be normalized with these, not its own mean/std.
+    input_stats = np.loadtxt(input_stats_path)
 
-    if (data_cache_path / "done.flag").exists():
-        print("Data already cached.")
-    else:
-        df_x, df_y = load_data()
-        train_blocks, test_blocks = make_blocks(df_x, df_y)
-
-        # Save each block as a separate file
-        for i, block in enumerate(train_blocks):
-            torch.save(block, data_cache_path / f"train_{i}.pt")
-        for i, block in enumerate(test_blocks):
-            torch.save(block, data_cache_path / f"test_{i}.pt")
-
-        # marker file
-        (data_cache_path / "done.flag").touch()
-        print("Data cached.")
-
-    # Store filenames
-    train_files = sorted([f for f in data_cache_path.glob("train_*.pt")])
-    test_files = sorted([f for f in data_cache_path.glob("test_*.pt")])
-
-    # Create blocks
-    train_blocks = [torch.load(f, map_location='cpu', weights_only=True) for f in train_files]
-    test_blocks = [torch.load(f, map_location='cpu', weights_only=True) for f in test_files]
-    
-    test_dataset = BlockDataset(test_blocks, debug=debug)
+    # Load and block the eval data
+    df_x = load_eval_data(eval_data_dir)
+    eval_blocks = make_eval_blocks(df_x)
+    eval_dataset = EvalBlockDataset(eval_blocks)
 
     # Model
-    model = RuptureNet2D(config)
-    #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     device = torch.device("cpu")
-
-    # Load edges
-    edge_index = np.loadtxt("fault_edges.txt", dtype=int)
-    edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
-    
-    # Define model
+    model = RuptureNet2D(config)
+    model.load_state_dict(torch.load(model_checkpoint, map_location=device))
     model = model.to(device)
-
-
- 
-    model.load_state_dict(torch.load("Training_GCN_v7/best_model.pth"))
-
     model.eval()
-
     print("Model loaded in eval mode")
 
-    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=0)
+    # Load fault graph edges
+    edge_index = np.loadtxt("fault_edges.txt", dtype=int)
+    edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
 
+    eval_loader = DataLoader(eval_dataset, batch_size=config['batch_size'],
+                              shuffle=False, num_workers=0)
+
+    batch_times = []
+    batch_sizes = []
+    run_start = time.perf_counter()
 
     count = 0
-
-    # Run through model
     with torch.no_grad():
-        for idx, (inputs, targets) in enumerate(test_loader):
-            preds = model(inputs,edge_index)
-            
+        for idx, inputs in enumerate(eval_loader):
+            inputs = inputs.to(device)
+
+            batch_start = time.perf_counter()
+
+            preds = model(inputs, edge_index)
+
+            batch_end = time.perf_counter()
+            batch_times.append(batch_end - batch_start)
+            batch_sizes.append(inputs.shape[0])
+
             preds = preds.detach().cpu().numpy().flatten()
-            targets = targets.detach().cpu().numpy().flatten()
 
             pdf = pd.DataFrame({"preds": preds})
-            pdf.to_csv(f"Testing_GCN_v7/eval-{idx}-pred.csv", index = False)
-
-            tdf = pd.DataFrame({"targets": targets})
-            tdf.to_csv(f"Testing_GCN_v7/eval-{idx}-true.csv", index = False)
+            pdf.to_csv(f"{output_dir}/eval-{idx}-pred.csv", index=False)
             print(count)
             count += 1
 
-    inputs_single = inputs[0:1]  # reuse last batch, take one sample
-    start = time.perf_counter()
-    pred_single = model(inputs_single, edge_index)
-    end = time.perf_counter()
-    print(f"Single sample inference: {(end - start) * 1000:.3f} ms")
+    run_end = time.perf_counter()
 
-        # To numpy array
-#         y_pred_np = y_pred.detach().cpu().numpy()
-#        y_true_np = y_true.detach().cpu().numpy()
+    batch_times = np.array(batch_times)
+    batch_sizes = np.array(batch_sizes)
+    np.savetxt("batch_info.txt", np.column_stack((batch_times, batch_sizes)))
 
-        #print(y_pred_np.type())
-#        print(y_pred_np)
-#        print(y_true_np)
+
+    total_inference_time = batch_times.sum()
+
+    print(f"\nBatches evaluated: {len(batch_times)}")
+    print(f"Total samples: {4864}")
+    print(f"Mean batch inference time: {batch_times.mean() * 1000:.3f} ms "
+          f"(std: {batch_times.std() * 1000:.3f} ms)")
+    print(f"Mean per-sample inference time: {(total_inference_time / 4864) * 1000:.3f} ms")
+    print(f"Total inference time (sum over batches, excludes I/O): {total_inference_time:.3f} s")
+    print(f"Total wall-clock time (inference + CSV writes): {run_end - run_start:.3f} s")
 
 if __name__ == "__main__":
-    main(Train_flag=0, Test_flag=1, checkpoint_no=0)
-    
-    
+    main()

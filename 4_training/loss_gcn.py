@@ -20,15 +20,14 @@ import torch
 # weight = (1 + target)**2 instead of just (1+ target)
 # will unstandardize h completely
 
+# MSE scaling
+alpha = 10
+
 # Masked loss function
-def masked_MSE(pred, target, inundate, nan_value=9999999):
-    # Separate time target for NAN mask
-    mask = inundate.bool()
+def masked_MSE(pred, target, bin, nan_value=9999999):
 
-    # LV = mask.unsqueeze(-1).expand_as(target)  # (B,100,2)
-    # LV = LV.to(pred.device)
-
-    LV = mask
+    # Use NAN mask
+    LV = bin.bool()
 
     # Count total valid
     valid_count = LV.sum()
@@ -44,14 +43,10 @@ def masked_MSE(pred, target, inundate, nan_value=9999999):
 
     return MSE
 
-def weighted_MSE(pred, target, inundate):
-    # Separate time target for NAN mask
-    mask = inundate.bool()
+def weighted_MSE(pred, target, bin):
 
-    # LV = mask.unsqueeze(-1).expand_as(target)  # (B,100,2)
-    # LV = LV.to(pred.device)
-
-    LV = mask
+    # Use NAN mask
+    LV = bin.bool()
 
     # Count total valid
     valid_count = LV.sum()
@@ -75,23 +70,20 @@ def loss_calc(preds_all,targets_all):
     t_targets = targets_all[:,:,0]
     h_preds = preds_all[:,:,1]
     h_targets = targets_all[:,:,1]
-    inundate_preds = preds_all[:,:,2]
-    t_inundate_targets = targets_all[:,:,2]
-    h_inundate_targets = targets_all[:,:,3]
+    bin_preds = preds_all[:,:,2]
+    t_bin_targets = targets_all[:,:,2]
+    h_bin_targets = targets_all[:,:,3]
 
     # Calculate MSE
-    t_MSE = masked_MSE(t_preds,t_targets,t_inundate_targets)
-    h_MSE = weighted_MSE(h_preds,h_targets,h_inundate_targets)
+    t_MSE = masked_MSE(t_preds,t_targets,t_bin_targets)
+    h_MSE = weighted_MSE(h_preds,h_targets,h_bin_targets)
+    MSE = t_MSE + alpha*h_MSE
 
     # Calculate BCE
     bce_func = nn.BCEWithLogitsLoss()
-    BCE = bce_func(inundate_preds, h_inundate_targets)
+    BCE = bce_func(bin_preds, h_bin_targets)
 
-    MSE = t_MSE + h_MSE
-
-        # Calculate loss
+    # Calculate loss
     loss = MSE + BCE
-    print(f"MSE: {MSE.item():.5f}; BCE: {BCE.item():.5f}")
-    print(f"\t t_MSE: {t_MSE:.5f}, h_MSE: {h_MSE:.8f}")
 
-    return loss
+    return loss, t_MSE, h_MSE, BCE

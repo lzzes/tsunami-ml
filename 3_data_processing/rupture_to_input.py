@@ -7,9 +7,23 @@ Output: GCN input-*.csv file
 
 import numpy as np
 
-def save_input(fault, num):
+def save_input(dir, fault, num):
+
+    # File prefix
+    if num < 10:
+        prefix = "00000"
+    elif num < 100:
+        prefix = "0000"
+    elif num < 1000:
+        prefix = "000"
+    elif num < 2432:
+        prefix = "00"
+    else:
+        prefix = ""
+
+
     # Load file
-    rupture_data = np.loadtxt(f"{fault}.{num}.rupt") ## Update with address of ruptures folder
+    rupture_data = np.loadtxt(f"{dir}/{fault}.{prefix}{num}.rupt") ## Update with address of ruptures folder
 
     # Calculate total slip
     ss_slip = rupture_data[:,8]
@@ -32,7 +46,7 @@ def save_input(fault, num):
 
     # Save file
     input_file = np.column_stack((Longitude, Latitude, Depth, Slip_all))
-    np.savetxt(f"input-{num}.csv", input_file, delimiter =',', header = "Lon,Lat,Depth,Slip", comments="")
+    np.savetxt(f"Input0904/input-{num}.csv", input_file, delimiter =',', header = "Lon,Lat,Depth,Slip", comments="")
 
     # Print updates
     if int(num)%100==0:
@@ -40,9 +54,10 @@ def save_input(fault, num):
 
 # Create all input files
 dataset_size = 2500 # update according to the number of ruptures on each fault
-
 fname_1 = "japan"
 fname_2 = "nankai"
-for i in range(2500):
-    save_input(fname_1,i)
-    save_input(fname_2,i)
+directory = "/mnt/c/Users/lizzi/OneDrive/Desktop/Meng_Group/Tsunami_ML/2026/tsunami-ml/2_synthetic_data/ruptures"
+
+for i in range(2432,dataset_size):
+    save_input(directory, fname_1,i)
+    save_input(directory, fname_2,i)
