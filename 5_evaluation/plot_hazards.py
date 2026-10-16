@@ -42,10 +42,10 @@ def determine_magnitudes(bin_size):
 
     # All magnitudes
     ptha_mags = np.array([])
-    start = 7.5
+    start = 75
     for i in range(16):
         ptha_mags=np.append(ptha_mags,start*np.ones(bin_size//2))
-        start = start + 0.1
+        start = start + 1
 
     ptha_mags = np.append(ptha_mags, ptha_mags)
 
@@ -66,17 +66,18 @@ def plot_map(loc, ax=None):
 
 def calc_hazard(loc,height_pred,h_in_true,levels,num_eval,ptha_mags,prob_ev):
     exceedance = np.zeros(100)
+    batch_size=64
 
     # Calculate exceedance at each level
     for lvl in range(len(levels)):
         L_exceed = 0
 
 
-        for i in range(num_eval*64):
+        for i in range(num_eval*batch_size):
             magnitude = ptha_mags[i]
 
             if (height_pred[loc::520][i] > levels[lvl]) & (h_in_true[loc::520][i]==True):
-                L_exceed += prob_ev[int((magnitude*10))%75]
+                L_exceed += prob_ev[int(magnitude)%75]
 
 
         exceedance[lvl]= L_exceed
@@ -96,7 +97,7 @@ def calc_hazard_err(loc,height_pred,h_in_true,levels,num_eval,ptha_mags,prob_ev,
         for i in range(num_eval): # for each scenario
 
             magnitude = ptha_mags[i] # determine the magnitude
-            occurrence = prob_ev[int((magnitude*10))%75] # and corresponding occurrence rate
+            occurrence = prob_ev[int(magnitude)%75] # and corresponding occurrence rate
 
             if h_in_true[loc::520][i]==False: # ignore events without run-up
                 continue
